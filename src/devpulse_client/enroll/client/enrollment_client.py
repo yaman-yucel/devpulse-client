@@ -1,19 +1,10 @@
-"""Client-side enrollment functionality for DevPulse.
-
-This module handles device enrollment with the DevPulse server, including:
-- Sending enrollment requests with device information
-- Receiving and storing credentials and configuration
-- Managing enrollment state and validation
-"""
+"""Enrollment client for DevPulse server communication."""
 
 from __future__ import annotations
 
 import json
 import platform
 import socket
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
@@ -21,90 +12,8 @@ from urllib.request import Request, urlopen
 
 from loguru import logger
 
-
-@dataclass
-class EnrollmentRequest:
-    """Enrollment request data sent to the server."""
-
-    username: str
-    hostname: str
-    platform: str
-    enrollment_secret: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "username": self.username,
-            "hostname": self.hostname,
-            "platform": self.platform,
-            "enrollment_secret": self.enrollment_secret,
-        }
-
-
-@dataclass
-class EnrollmentConfig:
-    """Configuration received from enrollment response."""
-
-    batch_max_events: int = 100
-    batch_max_interval_ms: int = 1000
-    heartbeat_interval_s: int = 5
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> EnrollmentConfig:
-        """Create from enrollment response config dict."""
-        batch_config = data.get("batch", {})
-        return cls(
-            batch_max_events=batch_config.get("max_events", 100),
-            batch_max_interval_ms=batch_config.get("max_interval_ms", 1000),
-            heartbeat_interval_s=data.get("heartbeat_interval_s", 5),
-        )
-
-
-@dataclass
-class EnrollmentResponse:
-    """Response received from successful enrollment."""
-
-    user_id: str
-    device_id: str
-    api_key: str
-    config: EnrollmentConfig
-    issued_at: datetime
-    expires_at: Optional[datetime] = None
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> EnrollmentResponse:
-        """Create from enrollment response dict."""
-        config_data = data.get("config", {})
-        config = EnrollmentConfig.from_dict(config_data)
-
-        issued_at = datetime.now()  # Use current time as issued_at
-        expires_at = None
-        if "expires_at" in data and data["expires_at"]:
-            expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
-
-        return cls(
-            user_id=data["user_id"],
-            device_id=data["device_id"],
-            api_key=data["api_key"],
-            config=config,
-            issued_at=issued_at,
-            expires_at=expires_at,
-        )
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for storage."""
-        return {
-            "user_id": self.user_id,
-            "device_id": self.device_id,
-            "api_key": self.api_key,
-            "issued_at": self.issued_at.isoformat(),
-            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
-            "config": {
-                "batch_max_events": self.config.batch_max_events,
-                "batch_max_interval_ms": self.config.batch_max_interval_ms,
-                "heartbeat_interval_s": self.config.heartbeat_interval_s,
-            },
-        }
+from ..collectors import DeviceFingerprintCollector
+from ..models import EnrollmentRequest, EnrollmentResponse
 
 
 class EnrollmentClient:
@@ -115,34 +24,19 @@ class EnrollmentClient:
         server_url: str,
         timeout_seconds: int = 30,
     ):
-        """Initialize enrollment client.
-
-        Args:
-            server_url: Base URL of the DevPulse server
-            timeout_seconds: Request timeout
-        """
         self.server_url = server_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.enrollment_endpoint = "/api/v1/enroll"
+        self._fingerprint_collector = DeviceFingerprintCollector()
 
     def enroll_device(
         self,
         username: str,
+        user_email: str,
         enrollment_secret: str,
         hostname: Optional[str] = None,
         platform_name: Optional[str] = None,
     ) -> Tuple[bool, str, Optional[EnrollmentResponse]]:
-        """Enroll this device with the DevPulse server.
-
-        Args:
-            username: Username for enrollment
-            enrollment_secret: Secret token provided by admin
-            hostname: Device hostname (auto-detected if not provided)
-            platform_name: Platform name (auto-detected if not provided)
-
-        Returns:
-            Tuple of (success, message, enrollment_response)
-        """
         try:
             # Auto-detect system information if not provided
             if hostname is None:
@@ -151,12 +45,16 @@ class EnrollmentClient:
             if platform_name is None:
                 platform_name = self._detect_platform()
 
+            device_fingerprint = self._fingerprint_collector.collect_fingerprint()
+
             # Create enrollment request
             request = EnrollmentRequest(
                 username=username,
+                user_email=user_email,
                 hostname=hostname,
                 platform=platform_name,
                 enrollment_secret=enrollment_secret,
+                device_fingerprint=device_fingerprint,  # holds mac, and other optional fields, mac is used for server side verification
             )
 
             logger.info(f"Enrolling device: {hostname} ({platform_name}) for user: {username}")
@@ -165,11 +63,12 @@ class EnrollmentClient:
             success, message, response_data = self._send_enrollment_request(request)
 
             if not success:
+                logger.error(f"Enrollment failed: {message}")
                 return False, message, None
 
             # Parse enrollment response
             try:
-                enrollment_response = EnrollmentResponse.from_dict(response_data)
+                enrollment_response = EnrollmentResponse.model_validate(response_data)
                 logger.info(f"Enrollment successful - Device ID: {enrollment_response.device_id}, User ID: {enrollment_response.user_id}")
                 return True, "Enrollment successful", enrollment_response
 
@@ -187,17 +86,9 @@ class EnrollmentClient:
         self,
         request: EnrollmentRequest,
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-        """Send enrollment request to server.
-
-        Args:
-            request: Enrollment request data
-
-        Returns:
-            Tuple of (success, message, response_data)
-        """
         try:
             url = urljoin(self.server_url, self.enrollment_endpoint)
-            payload = json.dumps(request.to_dict())
+            payload = json.dumps(request.model_dump())
 
             # Create HTTP request
             req = Request(
@@ -283,15 +174,3 @@ class EnrollmentClient:
 
         except Exception as e:
             return False, f"Connectivity test failed: {e}"
-
-
-def create_enrollment_client(server_url: str) -> EnrollmentClient:
-    """Create an enrollment client with default configuration.
-
-    Args:
-        server_url: Base URL of the DevPulse server
-
-    Returns:
-        Configured enrollment client
-    """
-    return EnrollmentClient(server_url=server_url)

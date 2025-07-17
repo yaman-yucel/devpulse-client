@@ -1,7 +1,9 @@
 """Secure credential storage for DevPulse client.
 
-This module handles storing and retrieving enrollment credentials
-in a secure local file with proper permissions.
+This module handles:
+- Storing and retrieving enrollment credentials in a secure local file
+- Managing credential lifecycle (creation, validation, removal)
+- Ensuring proper file permissions for security
 """
 
 from __future__ import annotations
@@ -11,11 +13,11 @@ import os
 import stat
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 from loguru import logger
 
-from .enrollment_client import EnrollmentConfig, EnrollmentResponse
+from ..enroll.models import EnrollmentConfig, EnrollmentResponse
 
 
 class CredentialStore:
@@ -47,15 +49,8 @@ class CredentialStore:
             True if stored successfully, False otherwise
         """
         try:
-            # Prepare credentials data
-            credentials = {
-                "device_id": enrollment_response.device_id,
-                "user_id": enrollment_response.user_id,
-                "api_key": enrollment_response.api_key,
-                "issued_at": enrollment_response.issued_at.isoformat(),
-                "expires_at": (enrollment_response.expires_at.isoformat() if enrollment_response.expires_at else None),
-                "config": enrollment_response.to_dict()["config"],
-            }
+            # Use the model's built-in serialization method
+            credentials = enrollment_response.to_storage_dict()
 
             # Write credentials to temporary file first
             temp_file = self.credentials_file.with_suffix(".tmp")
@@ -76,7 +71,7 @@ class CredentialStore:
             logger.error(f"Failed to store credentials: {e}")
             return False
 
-    def load_credentials(self) -> Tuple[bool, Optional[EnrollmentResponse]]:
+    def load_credentials(self) -> tuple[bool, Optional[EnrollmentResponse]]:
         """Load stored credentials.
 
         Returns:
@@ -140,7 +135,7 @@ class CredentialStore:
         success, enrollment_response = self.load_credentials()
         return success and enrollment_response is not None
 
-    def get_device_info(self) -> Tuple[Optional[str], Optional[str]]:
+    def get_device_info(self) -> tuple[Optional[str], Optional[str]]:
         """Get device and user IDs from stored credentials.
 
         Returns:
@@ -205,26 +200,8 @@ class CredentialStore:
     def _credentials_to_enrollment_response(self, data: dict) -> Optional[EnrollmentResponse]:
         """Convert stored credentials data back to EnrollmentResponse."""
         try:
-            config_data = data.get("config", {})
-            config = EnrollmentConfig(
-                batch_max_events=config_data.get("batch_max_events", 100),
-                batch_max_interval_ms=config_data.get("batch_max_interval_ms", 1000),
-                heartbeat_interval_s=config_data.get("heartbeat_interval_s", 5),
-            )
-
-            issued_at = datetime.fromisoformat(data["issued_at"])
-            expires_at = None
-            if data.get("expires_at"):
-                expires_at = datetime.fromisoformat(data["expires_at"])
-
-            return EnrollmentResponse(
-                user_id=data["user_id"],
-                device_id=data["device_id"],
-                api_key=data["api_key"],
-                config=config,
-                issued_at=issued_at,
-                expires_at=expires_at,
-            )
+            # Use Pydantic's model validation for proper parsing
+            return EnrollmentResponse.model_validate(data)
 
         except Exception as e:
             logger.error(f"Failed to parse credentials data: {e}")
@@ -235,55 +212,17 @@ class CredentialStore:
         if enrollment_response.expires_at is None:
             return False  # No expiration
 
-        return datetime.now() >= enrollment_response.expires_at
+        # Handle timezone-aware comparison
+        now = datetime.now()
+        expires_at = enrollment_response.expires_at
 
+        # If expires_at is timezone-aware but now is naive, make now UTC
+        if expires_at.tzinfo is not None and now.tzinfo is None:
+            from datetime import timezone
 
-class CredentialManager:
-    """High-level credential management interface."""
+            now = now.replace(tzinfo=timezone.utc)
+        # If expires_at is naive but now is timezone-aware, strip timezone from now
+        elif expires_at.tzinfo is None and now.tzinfo is not None:
+            now = now.replace(tzinfo=None)
 
-    def __init__(self, config_dir: Optional[Path] = None):
-        """Initialize credential manager.
-
-        Args:
-            config_dir: Directory for config files (defaults to ~/.devpulse)
-        """
-        self.store = CredentialStore(config_dir)
-
-    def is_enrolled(self) -> bool:
-        """Check if device is enrolled with valid credentials."""
-        return self.store.has_valid_credentials()
-
-    def get_credentials(self) -> Optional[EnrollmentResponse]:
-        """Get valid credentials if available."""
-        success, credentials = self.store.load_credentials()
-        return credentials if success else None
-
-    def save_enrollment(self, enrollment_response: EnrollmentResponse) -> bool:
-        """Save enrollment credentials."""
-        return self.store.store_credentials(enrollment_response)
-
-    def clear_enrollment(self) -> bool:
-        """Clear stored enrollment."""
-        return self.store.remove_credentials()
-
-    def get_device_identity(self) -> Tuple[Optional[str], Optional[str]]:
-        """Get device and user identity."""
-        return self.store.get_device_info()
-
-    def get_pipeline_config(self) -> Optional[dict]:
-        """Get configuration for the event pipeline."""
-        config = self.store.get_config()
-        if config is None:
-            return None
-
-        return {
-            "api_key": self.store.get_api_key(),
-            "batch_max_size": config.batch_max_events,
-            "batch_max_age_seconds": config.batch_max_interval_ms // 1000,
-            "heartbeat_interval": config.heartbeat_interval_s,
-        }
-
-
-def get_default_credential_manager() -> CredentialManager:
-    """Get the default credential manager instance."""
-    return CredentialManager()
+        return now >= expires_at

@@ -19,7 +19,7 @@ from typing import Optional
 from loguru import logger
 
 from ..config import DevPulseConfig, get_config_manager
-from ..enroll import create_enrollment_client, get_default_credential_manager
+from ..enroll import EnrollmentClient, get_default_credential_manager
 from ..orchestrator import PipelineConfig, PipelineOrchestrator, create_default_pipeline
 from .events import ActivityEventType
 from .trackers import ActivityTracker, HeartbeatTracker, ScreenshotTracker, WindowTracker
@@ -59,24 +59,15 @@ class DevPulseClient:
     def enroll(
         self,
         username: str,
+        user_email: str,  # might need better auth for email
         enrollment_secret: str,
         hostname: Optional[str] = None,
     ) -> bool:
-        """Enroll this device with the DevPulse server.
-
-        Args:
-            username: Username for enrollment
-            enrollment_secret: Secret token from admin
-            hostname: Device hostname (auto-detected if not provided)
-
-        Returns:
-            True if enrollment successful, False otherwise
-        """
         logger.info(f"Starting enrollment for user: {username}")
 
         try:
             # Create enrollment client
-            enrollment_client = create_enrollment_client(self.server_url)
+            enrollment_client = EnrollmentClient(server_url=self.server_url)
 
             # Test connectivity first
             success, message = enrollment_client.test_connectivity()
@@ -87,8 +78,10 @@ class DevPulseClient:
             # Perform enrollment
             success, message, enrollment_response = enrollment_client.enroll_device(
                 username=username,
+                user_email=user_email,
                 enrollment_secret=enrollment_secret,
                 hostname=hostname,
+                collect_fingerprint=True,
             )
 
             if not success:
