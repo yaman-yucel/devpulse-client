@@ -1,0 +1,18 @@
+[project]
+name = "devpulse-client"
+version = "0.1.0"
+description = "Client DevPulse"
+readme = "README.md"
+authors = [
+    { name = "Yaman Yucel", email = "yamanyucel0@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
+]
+
+[dependency-groups]
+dev = [
+    "loguru>=0.7.3",
+]
