@@ -2,12 +2,12 @@ import time
 
 from loguru import logger
 
-from tracker.config.logger_config import setup_logging
-from tracker.config.tracker_settings import tracker_settings
-from tracker.core import ActivityStateTask, HeartbeatTask, ScreenshotTask, SignalHandler, WindowTrackerTask
-from tracker.db.connect import test_database_connection
-from tracker.db.event_store import EventStore
-from tracker.tables.activity_table import ActivityEventType
+from .config.logger_config import setup_logging
+from .config.tracker_settings import tracker_settings
+from .core import ActivityStateTask, HeartbeatTask, ScreenshotTask, SignalHandler, WindowTrackerTask
+from .db.connect import test_database_connection
+from .db.event_store import EventStore
+from .tables.activity_table import ActivityEventType
 
 
 class DevPulseApp:
