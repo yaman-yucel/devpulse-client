@@ -1,7 +1,7 @@
-"""Clean DevPulse application with enrollment and pipeline architecture.
+"""Clean DevPulse application with simplified credential management.
 
-This is the new DevPulse client that integrates:
-- Device enrollment and credential management
+This is the DevPulse client that integrates:
+- Simple MAC address-based device enrollment and validation
 - Dynamic configuration from server
 - Clean tracking components
 - Event pipeline architecture
@@ -19,19 +19,19 @@ from typing import Optional
 from loguru import logger
 
 from ..config import DevPulseConfig, get_config_manager
-from ..enroll import EnrollmentClient, get_default_credential_manager
+from ..enroll.client.enrollment_client import CredentialClient, EnrollStatus, ValidateStatus
 from ..orchestrator import PipelineConfig, PipelineOrchestrator, create_default_pipeline
 from .events import ActivityEventType
 from .trackers import ActivityTracker, HeartbeatTracker, ScreenshotTracker, WindowTracker
 
 
 class DevPulseClient:
-    """Clean DevPulse client with enrollment and pipeline architecture."""
+    """Clean DevPulse client with simplified credential management."""
 
     def __init__(
         self,
         server_url: str,
-        config_dir: Optional[Path] = None,
+        # config_dir: Optional[Path] = None,
     ):
         """Initialize DevPulse client.
 
@@ -40,72 +40,40 @@ class DevPulseClient:
             config_dir: Directory for configuration files
         """
         self.server_url = server_url
-        self.config_dir = config_dir
+        # self.config_dir = config_dir
 
         # Initialize managers
-        self.credential_manager = get_default_credential_manager()
-        self.config_manager = get_config_manager()
+        self.credential_client = CredentialClient(server_url=server_url)
+        # self.config_manager = get_config_manager()
 
         # Initialize components (will be set up after enrollment/config)
-        self.config: Optional[DevPulseConfig] = None
-        self.pipeline: Optional[PipelineOrchestrator] = None
-        self.trackers: list = []
+        # self.config: Optional[DevPulseConfig] = None
+        # self.pipeline: Optional[PipelineOrchestrator] = None
+        # self.trackers: list = []
 
         # Set up signal handling
-        self._setup_signal_handling()
+        # self._setup_signal_handling()
 
         logger.info(f"Initialized DevPulse client for server: {server_url}")
 
     def enroll(
         self,
         username: str,
-        user_email: str,  # might need better auth for email
-        enrollment_secret: str,
-        hostname: Optional[str] = None,
+        user_email: str,
     ) -> bool:
         logger.info(f"Starting enrollment for user: {username}")
 
-        try:
-            # Create enrollment client
-            enrollment_client = EnrollmentClient(server_url=self.server_url)
-
-            # Test connectivity first
-            success, message = enrollment_client.test_connectivity()
-            if not success:
-                logger.error(f"Server connectivity test failed: {message}")
-                return False
-
-            # Perform enrollment
-            success, message, enrollment_response = enrollment_client.enroll_device(
-                username=username,
-                user_email=user_email,
-                enrollment_secret=enrollment_secret,
-                hostname=hostname,
-                collect_fingerprint=True,
-            )
-
-            if not success:
-                logger.error(f"Enrollment failed: {message}")
-                return False
-
-            if enrollment_response is None:
-                logger.error("Enrollment response is missing")
-                return False
-
-            # Store credentials
-            if not self.credential_manager.save_enrollment(enrollment_response):
-                logger.error("Failed to save enrollment credentials")
-                return False
-
-            logger.info(f"Enrollment successful - Device: {enrollment_response.device_id}, User: {enrollment_response.user_id}")
+        response = self.credential_client.enroll_device(username, user_email)
+        print(response.message)
+        if response.status == EnrollStatus.SUCCESS:
+            logger.info(f"✅ {response.message}")
 
             return True
-
-        except Exception as e:
-            logger.error(f"Enrollment error: {e}")
+        else:
+            logger.error(f"❌ Enrollment failed: {response.message}")
             return False
 
-    def start(self) -> bool:
+    def start(self, user_email: str) -> bool:
         """Start the DevPulse client.
 
         Returns:
@@ -114,221 +82,228 @@ class DevPulseClient:
         logger.info("Starting DevPulse client...")
 
         try:
-            # Check if device is enrolled
-            if not self.credential_manager.is_enrolled():
-                logger.error("Device is not enrolled. Please run enrollment first.")
+            # Validate credentials with server
+            logger.info("Validating credentials with server...")
+            response = self.credential_client.validate_credentials(user_email)
+            if response.status == ValidateStatus.FAILURE:
+                logger.error(f"❌ {response.message}")
                 return False
 
-            # Load credentials and configuration
-            credentials = self.credential_manager.get_credentials()
-            if credentials is None:
-                logger.error("Failed to load credentials")
-                return False
-
-            # Initialize configuration
-            self.config = self.config_manager.load_config(
-                server_url=self.server_url,
-                username=credentials.user_id,
-                client_id=credentials.device_id,
-            )
-
-            # Apply enrollment configuration
-            enrollment_config = self.credential_manager.get_pipeline_config()
-            if enrollment_config:
-                self.config_manager.apply_enrollment(enrollment_config)
-
-            # Validate configuration
-            is_valid, errors = self.config_manager.validate_config()
-            if not is_valid:
-                logger.error(f"Invalid configuration: {errors}")
-                return False
-
-            # Create pipeline
-            pipeline_config = self._create_pipeline_config()
-            self.pipeline = PipelineOrchestrator(pipeline_config)
-
-            # Start pipeline
-            if not self.pipeline.start():
-                logger.error("Failed to start event pipeline")
-                return False
-
-            # Initialize tracking components
-            self._initialize_trackers()
-
-            logger.info("DevPulse client started successfully")
+            logger.info(f"✅ {response.message}")
             return True
+
+        #     # Initialize configuration
+        #     self.config = self.config_manager.load_config(
+        #         server_url=self.server_url,
+        #         username=credentials["user_id"],
+        #         client_id=credentials["device_id"],
+        #     )
+
+        #     # Apply configuration from credentials
+        #     credential_config = self.credential_manager.get_config()
+        #     if credential_config:
+        #         # Convert credential config to the format expected by config manager
+        #         enrollment_config = {
+        #             "api_key": credentials["api_key"],
+        #             "batch_max_size": credential_config.get("batch_max_events", 100),
+        #             "batch_max_age_seconds": credential_config.get("batch_max_interval_ms", 1000) // 1000,
+        #             "heartbeat_interval": credential_config.get("heartbeat_interval_s", 5),
+        #         }
+        #         self.config_manager.apply_enrollment(enrollment_config)
+
+        #     # Validate configuration
+        #     is_valid, errors = self.config_manager.validate_config()
+        #     if not is_valid:
+        #         logger.error(f"Invalid configuration: {errors}")
+        #         return False
+
+        #     # Create pipeline
+        #     pipeline_config = self._create_pipeline_config()
+        #     self.pipeline = PipelineOrchestrator(pipeline_config)
+
+        #     # Start pipeline
+        #     if not self.pipeline.start():
+        #         logger.error("Failed to start event pipeline")
+        #         return False
+
+        #     # Initialize tracking components
+        #     self._initialize_trackers()
+
+        #     logger.info("DevPulse client started successfully")
+        #     return True
 
         except Exception as e:
             logger.error(f"Failed to start client: {e}")
             return False
 
-    def run(self) -> bool:
-        """Run the main tracking loop.
 
-        Returns:
-            True if completed successfully, False if errors occurred
-        """
-        if not self.config or not self.pipeline:
-            logger.error("Client not properly initialized. Call start() first.")
-            return False
+#     def run(self) -> bool:
+#         """Run the main tracking loop.
 
-        logger.info("Starting main tracking loop...")
+#         Returns:
+#             True if completed successfully, False if errors occurred
+#         """
+#         if not self.config or not self.pipeline:
+#             logger.error("Client not properly initialized. Call start() first.")
+#             return False
 
-        try:
-            # Initialize trackers
-            for tracker in self.trackers:
-                if hasattr(tracker, "initialize"):
-                    tracker.initialize()
+#         logger.info("Starting main tracking loop...")
 
-            # Main loop
-            while True:
-                # Run all trackers
-                for tracker in self.trackers:
-                    try:
-                        tracker.tick()
-                    except Exception as e:
-                        logger.error(f"Error in tracker {type(tracker).__name__}: {e}")
+#         try:
+#             # Initialize trackers
+#             for tracker in self.trackers:
+#                 if hasattr(tracker, "initialize"):
+#                     tracker.initialize()
 
-                # Sleep for the configured delay
-                if self.config.tracker.system_run_delay > 0:
-                    time.sleep(self.config.tracker.system_run_delay)
+#             # Main loop
+#             while True:
+#                 # Run all trackers
+#                 for tracker in self.trackers:
+#                     try:
+#                         tracker.tick()
+#                     except Exception as e:
+#                         logger.error(f"Error in tracker {type(tracker).__name__}: {e}")
 
-        except KeyboardInterrupt:
-            logger.info("Received keyboard interrupt")
-            return True
-        except Exception as e:
-            logger.error(f"Error in main loop: {e}")
-            return False
-        finally:
-            self._shutdown()
-            return True
+#                 # Sleep for the configured delay
+#                 if self.config.tracker.system_run_delay > 0:
+#                     time.sleep(self.config.tracker.system_run_delay)
 
-    def stop(self) -> None:
-        """Stop the DevPulse client gracefully."""
-        logger.info("Stopping DevPulse client...")
-        self._shutdown()
+#         except KeyboardInterrupt:
+#             logger.info("Received keyboard interrupt")
+#             return True
+#         except Exception as e:
+#             logger.error(f"Error in main loop: {e}")
+#             return False
+#         finally:
+#             self._shutdown()
+#             return True
 
-    def get_status(self) -> dict:
-        """Get client status information.
+#     def stop(self) -> None:
+#         """Stop the DevPulse client gracefully."""
+#         logger.info("Stopping DevPulse client...")
+#         self._shutdown()
 
-        Returns:
-            Dictionary with status information
-        """
-        status = {
-            "enrolled": self.credential_manager.is_enrolled(),
-            "running": self.pipeline is not None and self.pipeline._running if self.pipeline else False,
-            "server_url": self.server_url,
-        }
+#     def get_status(self) -> dict:
+#         """Get client status information.
 
-        # Add device information if enrolled
-        if status["enrolled"]:
-            device_id, user_id = self.credential_manager.get_device_identity()
-            status.update(
-                {
-                    "device_id": device_id,
-                    "user_id": user_id,
-                }
-            )
+#         Returns:
+#             Dictionary with status information
+#         """
+#         status = {
+#             "enrolled": self.credential_manager.is_enrolled(),
+#             "running": self.pipeline is not None and self.pipeline._running if self.pipeline else False,
+#             "server_url": self.server_url,
+#         }
 
-        # Add pipeline stats if running
-        if self.pipeline:
-            status["pipeline_stats"] = self.pipeline.get_pipeline_stats()
+#         # Add device information if enrolled
+#         if status["enrolled"]:
+#             device_id, user_id = self.credential_manager.get_device_info()
+#             status.update(
+#                 {
+#                     "device_id": device_id,
+#                     "user_id": user_id,
+#                 }
+#             )
 
-        return status
+#         # Add pipeline stats if running
+#         if self.pipeline:
+#             status["pipeline_stats"] = self.pipeline.get_pipeline_stats()
 
-    def force_sync(self) -> bool:
-        """Force synchronization of pending events.
+#         return status
 
-        Returns:
-            True if successful, False otherwise
-        """
-        if self.pipeline:
-            return self.pipeline.force_batch_send()
-        return False
+#     def force_sync(self) -> bool:
+#         """Force synchronization of pending events.
 
-    def _create_pipeline_config(self) -> PipelineConfig:
-        """Create pipeline configuration from current config."""
-        if not self.config:
-            raise RuntimeError("No configuration loaded")
+#         Returns:
+#             True if successful, False otherwise
+#         """
+#         if self.pipeline:
+#             return self.pipeline.force_batch_send()
+#         return False
 
-        return PipelineConfig(
-            client_id=self.config.client_id,
-            username=self.config.username,
-            api_base_url=self.config.server_url,
-            api_key=self.config.api_key,
-            queue_config=self.config.get_queue_config(),
-            wal_config=self.config.get_wal_config(),
-            batcher_config=self.config.get_batcher_config(),
-            sender_config=self.config.get_sender_config(),
-            stats_report_interval=self.config.pipeline.stats_report_interval,
-        )
+#     def _create_pipeline_config(self) -> PipelineConfig:
+#         """Create pipeline configuration from current config."""
+#         if not self.config:
+#             raise RuntimeError("No configuration loaded")
 
-    def _initialize_trackers(self) -> None:
-        """Initialize tracking components."""
-        if not self.config or not self.pipeline:
-            raise RuntimeError("Configuration or pipeline not available")
+#         return PipelineConfig(
+#             client_id=self.config.client_id,
+#             username=self.config.username,
+#             api_base_url=self.config.server_url,
+#             api_key=self.config.api_key,
+#             queue_config=self.config.get_queue_config(),
+#             wal_config=self.config.get_wal_config(),
+#             batcher_config=self.config.get_batcher_config(),
+#             sender_config=self.config.get_sender_config(),
+#             stats_report_interval=self.config.pipeline.stats_report_interval,
+#         )
 
-        # Get event producer for trackers
-        event_producer = self.pipeline.get_producer("trackers")
+#     def _initialize_trackers(self) -> None:
+#         """Initialize tracking components."""
+#         if not self.config or not self.pipeline:
+#             raise RuntimeError("Configuration or pipeline not available")
 
-        # Create tracking components
-        self.trackers = [
-            HeartbeatTracker(self.config, event_producer),
-            ActivityTracker(self.config, event_producer),
-            WindowTracker(self.config, event_producer),
-            ScreenshotTracker(self.config, event_producer),
-        ]
+#         # Get event producer for trackers
+#         event_producer = self.pipeline.get_producer("trackers")
 
-        logger.info(f"Initialized {len(self.trackers)} tracking components")
+#         # Create tracking components
+#         self.trackers = [
+#             HeartbeatTracker(self.config, event_producer),
+#             ActivityTracker(self.config, event_producer),
+#             WindowTracker(self.config, event_producer),
+#             ScreenshotTracker(self.config, event_producer),
+#         ]
 
-    def _setup_signal_handling(self) -> None:
-        """Set up signal handlers for graceful shutdown."""
+#         logger.info(f"Initialized {len(self.trackers)} tracking components")
 
-        def signal_handler(signum, frame):
-            signal_name = signal.Signals(signum).name
-            logger.info(f"Received {signal_name} signal, shutting down...")
-            self._shutdown()
-            sys.exit(0)
+#     def _setup_signal_handling(self) -> None:
+#         """Set up signal handlers for graceful shutdown."""
 
-        # Register signal handlers
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+#         def signal_handler(signum, frame):
+#             signal_name = signal.Signals(signum).name
+#             logger.info(f"Received {signal_name} signal, shutting down...")
+#             self._shutdown()
+#             sys.exit(0)
 
-        # Windows-specific
-        if hasattr(signal, "SIGBREAK"):
-            signal.signal(signal.SIGBREAK, signal_handler)
+#         # Register signal handlers
+#         signal.signal(signal.SIGINT, signal_handler)
+#         signal.signal(signal.SIGTERM, signal_handler)
 
-    def _shutdown(self) -> None:
-        """Perform graceful shutdown."""
-        logger.info("Performing graceful shutdown...")
+#         # Windows-specific
+#         if hasattr(signal, "SIGBREAK"):
+#             signal.signal(signal.SIGBREAK, signal_handler)
 
-        try:
-            # Shutdown trackers
-            for tracker in self.trackers:
-                if hasattr(tracker, "shutdown"):
-                    try:
-                        tracker.shutdown()
-                    except Exception as e:
-                        logger.error(f"Error shutting down tracker: {e}")
+#     def _shutdown(self) -> None:
+#         """Perform graceful shutdown."""
+#         logger.info("Performing graceful shutdown...")
 
-            # Shutdown pipeline
-            if self.pipeline:
-                self.pipeline.stop()
+#         try:
+#             # Shutdown trackers
+#             for tracker in self.trackers:
+#                 if hasattr(tracker, "shutdown"):
+#                     try:
+#                         tracker.shutdown()
+#                     except Exception as e:
+#                         logger.error(f"Error shutting down tracker: {e}")
 
-            logger.info("Shutdown complete")
+#             # Shutdown pipeline
+#             if self.pipeline:
+#                 self.pipeline.stop()
 
-        except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+#             logger.info("Shutdown complete")
+
+#         except Exception as e:
+#             logger.error(f"Error during shutdown: {e}")
 
 
-def create_devpulse_client(server_url: str, **kwargs) -> DevPulseClient:
-    """Create a DevPulse client with default configuration.
+# def create_devpulse_client(server_url: str, **kwargs) -> DevPulseClient:
+#     """Create a DevPulse client with default configuration.
 
-    Args:
-        server_url: URL of the DevPulse server
-        **kwargs: Additional arguments for DevPulseClient
+#     Args:
+#         server_url: URL of the DevPulse server
+#         **kwargs: Additional arguments for DevPulseClient
 
-    Returns:
-        Configured DevPulse client
-    """
-    return DevPulseClient(server_url=server_url, **kwargs)
+#     Returns:
+#         Configured DevPulse client
+#     """
+#     return DevPulseClient(server_url=server_url, **kwargs)

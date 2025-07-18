@@ -1,18 +1,9 @@
-"""Enrollment module for DevPulse client."""
+"""Enrollment package for device registration and validation.
 
-from ..credential import CredentialManager, CredentialStore, ValidationResult, create_credential_manager, get_default_credential_manager
-from .client import EnrollmentClient
-from .models import DeviceFingerprint, EnrollmentConfig, EnrollmentRequest, EnrollmentResponse
+Tests for this package are located in the enroll_test folder."""
 
-__all__ = [
-    "CredentialManager",
-    "CredentialStore",
-    "DeviceFingerprint",
-    "EnrollmentClient",
-    "EnrollmentConfig",
-    "EnrollmentRequest",
-    "EnrollmentResponse",
-    "ValidationResult",
-    "create_credential_manager",
-    "get_default_credential_manager",
-]
+from .client.enrollment_client import CredentialClient
+from .collectors.device_collector import DeviceFingerprintCollector
+from .models.enrollment_models import DeviceFingerprint, EnrollmentRequest
+
+__all__ = ["CredentialClient", "DeviceFingerprintCollector", "DeviceFingerprint", "EnrollmentRequest"]

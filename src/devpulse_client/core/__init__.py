@@ -1,6 +1,6 @@
 """Core DevPulse client components - Clean architecture without legacy dependencies."""
 
-from .clean_app import DevPulseClient, create_devpulse_client
+from .clean_app import DevPulseClient
 from .events import ActivityEvent, ActivityEventType, BaseEvent, EventBatch, EventType, HeartbeatEvent, HeartbeatType, ScreenshotEvent, WindowEvent
 from .trackers import ActivityTracker, HeartbeatTracker, ScreenshotTracker, WindowTracker
 
@@ -22,5 +22,4 @@ __all__ = [
     "ScreenshotTracker",
     # Clean application
     "DevPulseClient",
-    "create_devpulse_client",
 ]

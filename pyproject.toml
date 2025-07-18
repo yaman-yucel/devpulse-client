@@ -13,6 +13,9 @@ dependencies = [
     "pydantic-settings>=2.10.1",
 ]
 
+[project.scripts]
+devpulse_client = "devpulse_client.__main__:main"
+
 [dependency-groups]
 dev = [
     "loguru>=0.7.3",

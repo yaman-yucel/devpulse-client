@@ -7,7 +7,7 @@ from typing import Optional
 
 from loguru import logger
 
-from ..models import DeviceFingerprint
+from ..models.enrollment_models import DeviceFingerprint
 
 
 class DeviceFingerprintCollector:
@@ -39,7 +39,7 @@ class DeviceFingerprintCollector:
             logger.warning(f"Failed to collect device fingerprint: {e}")
             return DeviceFingerprint()
 
-    def _get_mac_address(self) -> Optional[str]:
+    def _get_mac_address(self) -> str | None:
         """Get the MAC address of the primary network interface."""
         try:
             mac = uuid.getnode()

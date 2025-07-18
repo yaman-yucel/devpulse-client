@@ -1,7 +1,7 @@
 """Enrollment client package."""
 
-from .enrollment_client import EnrollmentClient
+from .enrollment_client import CredentialClient
 
 __all__ = [
-    "EnrollmentClient",
+    "CredentialClient",
 ]
